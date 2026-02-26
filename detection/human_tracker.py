@@ -506,11 +506,27 @@ class ActivityClassifier:
                     left_diagonal_aiming = 45 <= left_arm_angle <= 135
                     right_diagonal_aiming = -135 <= right_arm_angle <= -45
                     
+                    # NEW: Check for UPWARD aiming poses (based on your images)
+                    # Upward aiming: arms pointing upward (-135° to -45° and 45° to 135°)
+                    left_upward_aiming = -135 <= left_arm_angle <= -45
+                    right_upward_aiming = 45 <= right_arm_angle <= 135
+                    
+                    # NEW: Check for HIGH side poses (arms above shoulder level)
+                    # High side: arms extended sideways but elevated
+                    left_high_side = 30 <= left_arm_angle <= 90
+                    right_high_side = -90 <= right_arm_angle <= -30
+                    
+                    # NEW: Check for LOW aiming poses (arms pointing downward)
+                    # Low aiming: arms pointing downward slightly
+                    left_low_aiming = -30 <= left_arm_angle <= 30
+                    right_low_aiming = -30 <= right_arm_angle <= 30
+                    
                     # Enhanced side aiming detection
                     side_aiming_detected = False
                     aiming_type = ""
                     
-                    if left_side_aiming or right_side_aiming or left_diagonal_aiming or right_diagonal_aiming:
+                    if left_side_aiming or right_side_aiming or left_diagonal_aiming or right_diagonal_aiming or \
+                       left_upward_aiming or right_upward_aiming or left_high_side or right_high_side:
                         # Verify if wrists are extended away from body (aiming posture)
                         left_shoulder_x = left_shoulder[0]
                         right_shoulder_x = right_shoulder[0]
@@ -521,28 +537,72 @@ class ActivityClassifier:
                         left_horizontal_extension = abs(left_wrist_x - left_shoulder_x)
                         right_horizontal_extension = abs(right_wrist_x - right_shoulder_x)
                         
-                        # Minimum extension required for aiming (30% of body width)
-                        body_width = abs(right_shoulder_x - left_shoulder_x)
-                        min_extension = body_width * 0.3
+                        # Check vertical extension for upward aiming
+                        left_vertical_extension = abs(left_wrist_y - left_shoulder_y)
+                        right_vertical_extension = abs(right_wrist_y - right_shoulder_y)
                         
-                        # Check for valid side aiming pose
-                        if (left_side_aiming and left_horizontal_extension > min_extension) or \
-                           (right_side_aiming and right_horizontal_extension > min_extension) or \
-                           (left_diagonal_aiming and left_horizontal_extension > min_extension) or \
-                           (right_diagonal_aiming and right_horizontal_extension > min_extension):
-                            
+                        # Minimum extension required for aiming (30% of body width/height)
+                        body_width = abs(right_shoulder_x - left_shoulder_x)
+                        body_height = abs(left_shoulder_y - left_hip[1]) if len(left_hip) >= 2 else body_width
+                        min_horizontal_extension = body_width * 0.3
+                        min_vertical_extension = body_height * 0.2
+                        
+                        # Enhanced detection for various aiming poses
+                        valid_aiming = False
+                        
+                        # Check forward aiming (existing logic)
+                        if left_aiming or right_aiming:
+                            valid_aiming = True
+                            aiming_type = "FORWARD"
+                        
+                        # Check side aiming with horizontal extension
+                        elif (left_side_aiming and left_horizontal_extension > min_horizontal_extension) or \
+                             (right_side_aiming and right_horizontal_extension > min_horizontal_extension):
+                            valid_aiming = True
+                            aiming_type = "SIDE"
+                        
+                        # Check diagonal aiming
+                        elif (left_diagonal_aiming and left_horizontal_extension > min_horizontal_extension) or \
+                             (right_diagonal_aiming and right_horizontal_extension > min_horizontal_extension):
+                            valid_aiming = True
+                            aiming_type = "DIAGONAL"
+                        
+                        # Check upward aiming with vertical extension
+                        elif (left_upward_aiming and left_vertical_extension > min_vertical_extension) or \
+                             (right_upward_aiming and right_vertical_extension > min_vertical_extension):
+                            valid_aiming = True
+                            aiming_type = "UPWARD"
+                        
+                        # Check high side aiming
+                        elif (left_high_side and left_horizontal_extension > min_horizontal_extension * 0.8) or \
+                             (right_high_side and right_horizontal_extension > min_horizontal_extension * 0.8):
+                            valid_aiming = True
+                            aiming_type = "HIGH-SIDE"
+                        
+                        # Check low aiming
+                        elif (left_low_aiming and left_horizontal_extension > min_horizontal_extension * 0.5) or \
+                             (right_low_aiming and right_horizontal_extension > min_horizontal_extension * 0.5):
+                            valid_aiming = True
+                            aiming_type = "LOW"
+                        
+                        if valid_aiming:
                             side_aiming_detected = True
                             
-                            # Determine aiming type
+                            # Determine specific aiming type for debug
                             if left_side_aiming and right_side_aiming:
-                                aiming_type = "DUAL-SIDE"
                                 print(f"DEBUG: Dual-Handed Side Weapon Detected - Left: {left_arm_angle:.1f}°, Right: {right_arm_angle:.1f}° [SIDE AIMING - DUAL]")
+                            elif left_upward_aiming or right_upward_aiming:
+                                print(f"DEBUG: Upward Aiming Weapon Detected - Left: {left_arm_angle:.1f}°, Right: {right_arm_angle:.1f}° [UPWARD AIMING]")
+                            elif left_high_side or right_high_side:
+                                print(f"DEBUG: High Side Weapon Detected - Left: {left_arm_angle:.1f}°, Right: {right_arm_angle:.1f}° [HIGH-SIDE AIMING]")
+                            elif left_diagonal_aiming or right_diagonal_aiming:
+                                print(f"DEBUG: Diagonal Weapon Detected - Left: {left_arm_angle:.1f}°, Right: {right_arm_angle:.1f}° [DIAGONAL AIMING]")
                             elif left_side_aiming or left_diagonal_aiming:
-                                aiming_type = "LEFT-SIDE"
                                 print(f"DEBUG: Left-Handed Side Weapon Detected - Left: {left_arm_angle:.1f}°, Right: {right_arm_angle:.1f}° [SIDE AIMING - LEFT]")
                             elif right_side_aiming or right_diagonal_aiming:
-                                aiming_type = "RIGHT-SIDE"
                                 print(f"DEBUG: Right-Handed Side Weapon Detected - Left: {left_arm_angle:.1f}°, Right: {right_arm_angle:.1f}° [SIDE AIMING - RIGHT]")
+                            elif left_low_aiming or right_low_aiming:
+                                print(f"DEBUG: Low Aiming Weapon Detected - Left: {left_arm_angle:.1f}°, Right: {right_arm_angle:.1f}° [LOW AIMING]")
                     
                     if side_aiming_detected:
                         return "Aiming"
