@@ -892,7 +892,7 @@ class IntegratedGunDetectionSystem:
         return person_id, activity, person_state
     
     def create_vertical_analytics_panel(self, frame: np.ndarray, detections: List[Dict[str, Any]] = None) -> np.ndarray:
-        """Create professional analytics panel for right side"""
+        """Create professional analytics panel with agent insights"""
         analytics = np.zeros((540, 240, 3), dtype=np.uint8)
         analytics.fill(20)  # Dark background
         
@@ -916,13 +916,22 @@ class IntegratedGunDetectionSystem:
                             all_person_ids.add(detection.get("id", 0))
         total_unique_people = len(all_person_ids)
         
-        # Professional analytics data (simplified)
+        # ENHANCEMENT: Get agent insights
+        agent_insights = self._get_agent_insights(detections)
+        
+        # Professional analytics data with agent insights
         analytics_data = [
             ("System State:", system_state.upper(), self.get_system_state_color(system_state.upper())),
             ("", "", (255, 255, 255)),
-            ("� People Tracking", "", (0, 255, 0)),
+            ("👥 People Tracking", "", (0, 255, 0)),
             ("Current:", str(current_people), (0, 255, 255)),
             ("Total Unique:", str(total_unique_people), (0, 255, 255)),
+            ("", "", (255, 255, 255)),
+            ("🤖 Agent Insights", "", (255, 165, 0)),
+            ("Threat Score:", f"{agent_insights.get('max_threat_score', 0):.1f}", (255, 165, 0)),
+            ("Dominant Pose:", agent_insights.get('dominant_pose', 'Unknown'), (0, 255, 255)),
+            ("Patterns:", str(agent_insights.get('patterns_count', 0)), (255, 255, 0)),
+            ("Memory Context:", str(agent_insights.get('memory_contexts', 0)), (0, 255, 0)),
             ("", "", (255, 255, 255)),
             ("🔍 Threat Status", "", (255, 165, 0)),
             ("Total Detections:", str(self.stats['total_detections']), (255, 255, 255)),
@@ -930,19 +939,19 @@ class IntegratedGunDetectionSystem:
             ("Alerts Triggered:", str(self.stats['alerts_triggered']), (255, 0, 0)),
             ("", "", (255, 255, 255)),
             ("⚡ System Status", "", (0, 255, 0)),
-            ("FPS:", "30.0", (0, 255, 0)),
-            ("CPU:", "45%", (255, 255, 0)),
-            ("Memory:", "512MB", (255, 165, 0)),
+            ("FPS:", f"{agent_insights.get('fps', 30):.1f}", (0, 255, 0)),
+            ("CPU:", f"{agent_insights.get('cpu', 45)}%", (255, 255, 0)),
+            ("Memory:", f"{agent_insights.get('memory', 512)}MB", (255, 165, 0)),
             ("", "", (255, 255, 255)),
             ("📊 Session Info", "", (0, 255, 255)),
-            ("Uptime:", "02:15:30", (0, 255, 255)),
+            ("Uptime:", agent_insights.get('uptime', '00:00:00'), (0, 255, 255)),
             ("Evidence:", str(len([f for f in os.listdir("evidence/videos") if f.endswith(".mp4")])), (0, 255, 255)),
         ]
         
         y_offset = 50
         for label, value, color in analytics_data:
             if label:
-                if label.startswith(("�", "🔍", "⚡", "�")):
+                if label.startswith(("👥", "🤖", "🔍", "⚡", "📊")):
                     # Category headers
                     cv2.putText(analytics, label, (10, y_offset), 
                                cv2.FONT_HERSHEY_SIMPLEX, 0.4, color, 1)
@@ -959,6 +968,77 @@ class IntegratedGunDetectionSystem:
                    cv2.FONT_HERSHEY_SIMPLEX, 0.3, (100, 100, 100), 1)
         
         return analytics
+    
+    def _get_agent_insights(self, detections: List[Dict[str, Any]] = None) -> Dict[str, Any]:
+        """Get insights from enhanced agents"""
+        insights = {
+            'max_threat_score': 0.0,
+            'dominant_pose': 'Unknown',
+            'patterns_count': 0,
+            'memory_contexts': 0,
+            'fps': 30.0,
+            'cpu': 45,
+            'memory': 512,
+            'uptime': '00:00:00'
+        }
+        
+        if not detections:
+            return insights
+        
+        try:
+            # Get threat assessment from ThreatAssessmentAgent
+            if hasattr(self.decision_engine, 'threat_agent'):
+                for detection in detections:
+                    threat_assessment = self.decision_engine.threat_agent._assess_immediate_threat(
+                        self.decision_engine.threat_agent._create_threat_context(detection, {})
+                    )
+                    threat_score = threat_assessment.get('level', 0)
+                    insights['max_threat_score'] = max(insights['max_threat_score'], threat_score)
+            
+            # Get dominant pose from detections
+            pose_counts = {}
+            for detection in detections:
+                activity = detection.get("meta", {}).get("activity", "Unknown")
+                pose_counts[activity] = pose_counts.get(activity, 0) + 1
+            
+            if pose_counts:
+                insights['dominant_pose'] = max(pose_counts.items(), key=lambda x: x[1])[0]
+            
+            # Get memory context count from MemoryAgent
+            if hasattr(self.decision_engine, 'memory_agent'):
+                insights['memory_contexts'] = len(self.decision_engine.memory_agent.memory_store)
+                
+                # Count patterns from all memory contexts
+                total_patterns = 0
+                for memory_id, memory_data in self.decision_engine.memory_agent.memory_store.items():
+                    patterns = memory_data.get('patterns', [])
+                    total_patterns += len(patterns)
+                insights['patterns_count'] = total_patterns
+            
+            # Get system performance metrics
+            if hasattr(self, 'fps'):
+                insights['fps'] = self.fps
+            
+            # Get uptime
+            if hasattr(self, 'start_time'):
+                uptime_seconds = time.time() - self.start_time
+                hours = int(uptime_seconds // 3600)
+                minutes = int((uptime_seconds % 3600) // 60)
+                seconds = int(uptime_seconds % 60)
+                insights['uptime'] = f"{hours:02d}:{minutes:02d}:{seconds:02d}"
+            
+            # Get CPU and Memory (simplified)
+            try:
+                import psutil
+                insights['cpu'] = psutil.cpu_percent()
+                insights['memory'] = psutil.virtual_memory().used // (1024 * 1024)  # MB
+            except:
+                pass  # Keep default values if psutil not available
+                
+        except Exception as e:
+            print(f"Error getting agent insights: {e}")
+        
+        return insights
     
     def draw_detections_on_frame(self, frame: np.ndarray, detections: List[Dict[str, Any]]) -> np.ndarray:
         """Draw colored bounding boxes and labels on frame"""
