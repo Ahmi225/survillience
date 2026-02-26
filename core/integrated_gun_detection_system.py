@@ -818,6 +818,79 @@ class IntegratedGunDetectionSystem:
         
         return activity_stats
     
+    def get_enhanced_system_state(self, detections: List[Dict[str, Any]]) -> str:
+        """Enhanced state management based on weapon and pose combinations"""
+        has_weapon = False
+        has_aiming = False
+        has_hands_up = False
+        weapon_count = 0
+        aiming_count = 0
+        hands_up_count = 0
+        
+        # Check all detections for weapons and poses
+        for detection in detections:
+            class_name = detection.get("meta", {}).get("class_name", "").upper()
+            activity = detection.get("meta", {}).get("activity", "Unknown")
+            
+            # Check for weapons
+            if class_name in ["GUN", "KNIFE", "WEAPON"]:
+                has_weapon = True
+                weapon_count += 1
+            
+            # Check for suspicious poses
+            if activity.upper() in ["AIMING", "HANDSUP"]:
+                if activity.upper() == "AIMING":
+                    has_aiming = True
+                    aiming_count += 1
+                elif activity.upper() == "HANDSUP":
+                    has_hands_up = True
+                    hands_up_count += 1
+        
+        # Enhanced state logic
+        if has_weapon and (has_aiming or has_hands_up):
+            # EMERGENCY: Weapon + Suspicious Pose
+            print(f"🚨 EMERGENCY STATE: Weapon detected ({weapon_count}) + Suspicious pose (Aiming: {aiming_count}, HandsUp: {hands_up_count})")
+            self.trigger_emergency_alert()
+            return "EMERGENCY"
+        elif has_weapon:
+            # WEAPON DETECTED: Only weapon, no suspicious pose
+            print(f"⚠️ WEAPON DETECTED: {weapon_count} weapons found")
+            return "WEAPON_DETECTED"
+        elif has_aiming or has_hands_up:
+            # SUSPICIOUS: Only suspicious poses, no weapon
+            print(f"🔍 SUSPICIOUS STATE: Aiming ({aiming_count}) or HandsUp ({hands_up_count}) detected")
+            return "SUSPICIOUS"
+        else:
+            # NORMAL: No weapons, no suspicious poses
+            return "NORMAL"
+    
+    def trigger_emergency_alert(self):
+        """Trigger emergency alert with beep"""
+        try:
+            import winsound
+            # Play emergency beep sound
+            winsound.Beep(1000, 500)  # 1000Hz for 500ms
+            print("🚨 EMERGENCY ALERT BEEP ACTIVATED!")
+        except ImportError:
+            print("🚨 EMERGENCY ALERT (Visual Only - winsound not available)")
+        except Exception as e:
+            print(f"🚨 EMERGENCY ALERT (Sound Error: {e})")
+    
+    def get_person_state_info(self, detection: Dict[str, Any]) -> tuple:
+        """Get individual person's state information"""
+        person_id = detection.get("id", 0)
+        activity = detection.get("meta", {}).get("activity", "Unknown")
+        class_name = detection.get("meta", {}).get("class_name", "").upper()
+        
+        # Determine person state
+        person_state = "NORMAL"
+        if class_name in ["GUN", "KNIFE", "WEAPON"]:
+            person_state = "WEAPON_DETECTED"
+        elif activity.upper() in ["AIMING", "HANDSUP"]:
+            person_state = "SUSPICIOUS"
+        
+        return person_id, activity, person_state
+    
     def create_vertical_analytics_panel(self, frame: np.ndarray, detections: List[Dict[str, Any]] = None) -> np.ndarray:
         """Create vertical analytics panel for right side"""
         analytics = np.zeros((540, 240, 3), dtype=np.uint8)
@@ -827,9 +900,9 @@ class IntegratedGunDetectionSystem:
         cv2.putText(analytics, "SYSTEM ANALYTICS", (50, 25), 
                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
         
-        # Get current system state
+        # Get current system state using enhanced logic
         current_state = getattr(self.decision_engine.state_agent, 'state_transition', None)
-        system_state = current_state.current_state.value if current_state else "UNKNOWN"
+        system_state = self.get_enhanced_system_state(detections) if detections else "NORMAL"
         
         # Analytics data
         hands_up_count = self.pose_detector.get_hands_up_count()
@@ -975,14 +1048,23 @@ class IntegratedGunDetectionSystem:
             confidence = detection.get("meta", {}).get("raw_confidence", 0) * 100
             person_id = detection.get("id", 0)
             
+            # Get person state information
+            person_id, activity, person_state = self.get_person_state_info(detection)
+            
             # Get consistent color from human tracker
             color = self.human_tracker.get_id_color(person_id)
             
             # Check if track is occluded (from DeepSort)
             is_occluded = detection.get("meta", {}).get("is_occluded", False)
             time_since_update = detection.get("meta", {}).get("time_since_update", 0)
-            activity = detection.get("meta", {}).get("activity", "Unknown")
             keypoints = detection.get("meta", {}).get("keypoints", [])
+            
+            # Enhanced label with State, ID, and Pose
+            label_lines = [
+                f"ID: {person_id}",
+                f"State: {person_state}",
+                f"Pose: {activity}"
+            ]
             
             # Draw bounding box with occlusion handling
             if is_occluded:
@@ -1006,24 +1088,28 @@ class IntegratedGunDetectionSystem:
                 cv2.drawMarker(annotated_frame, (center_x, center_y), (0, 0, 255), 
                              cv2.MARKER_CROSS, 10, 3)
                 
-                # Occlusion label
-                label_text = f"PERSON {person_id} - OCCLUDED ({time_since_update}f) - {activity}"
+                # Occlusion label with state info
                 label_color = (0, 0, 255)  # Red for occluded
             else:
                 # Solid bounding box for visible person
                 cv2.rectangle(annotated_frame, (x1, y1), (x2, y2), color, 2)
                 
-                # Normal label with activity
-                label_text = f"PERSON {person_id} - {activity}"
+                # Normal label with state info
                 label_color = color
             
-            # Draw label background and text
-            label_size = cv2.getTextSize(label_text, cv2.FONT_HERSHEY_SIMPLEX, 0.5, 2)[0]
-            cv2.rectangle(annotated_frame, (x1, y1 - 25), (x1 + label_size[0], y1), label_color, -1)
+            # Draw multi-line label background and text
+            label_height = 25
+            total_label_height = len(label_lines) * label_height + 5
             
-            # Draw label text in white
-            cv2.putText(annotated_frame, label_text, (x1, y1 - 8), 
-                       cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 2)
+            # Draw background for multi-line label
+            cv2.rectangle(annotated_frame, (x1, y1 - total_label_height), 
+                         (x1 + 150, y1), label_color, -1)
+            
+            # Draw each line of the label
+            for i, line in enumerate(label_lines):
+                line_y = y1 - total_label_height + (i + 1) * label_height - 5
+                cv2.putText(annotated_frame, line, (x1 + 5, line_y), 
+                           cv2.FONT_HERSHEY_SIMPLEX, 0.4, (255, 255, 255), 1)
             
             # Draw pose landmarks if available
             if len(keypoints) >= 17:
