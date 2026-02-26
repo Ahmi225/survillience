@@ -497,9 +497,59 @@ class ActivityClassifier:
                         print(f"DEBUG: Right-Handed Weapon Detected (Full Body) - Left: {left_arm_angle:.1f}°, Right: {right_arm_angle:.1f}° [WEAPON AIMING - REAL RIGHT]")
                         return "Aiming"
                 else:
-                    # No aiming detected - check for normal activities
-                    print(f"DEBUG: No Weapon Detected - Left: {left_arm_angle:.1f}°, Right: {right_arm_angle:.1f}° [NORMAL POSITION]")
-                    # Continue to other checks (HandsUp, Sitting, etc.)
+                    # Check for SIDE AIMING poses when forward aiming not detected
+                    # Side aiming: arms extended sideways (90° ± 30°)
+                    left_side_aiming = 60 <= left_arm_angle <= 120
+                    right_side_aiming = -120 <= right_arm_angle <= -60
+                    
+                    # Also check for diagonal aiming (45° to 135° and -45° to -135°)
+                    left_diagonal_aiming = 45 <= left_arm_angle <= 135
+                    right_diagonal_aiming = -135 <= right_arm_angle <= -45
+                    
+                    # Enhanced side aiming detection
+                    side_aiming_detected = False
+                    aiming_type = ""
+                    
+                    if left_side_aiming or right_side_aiming or left_diagonal_aiming or right_diagonal_aiming:
+                        # Verify if wrists are extended away from body (aiming posture)
+                        left_shoulder_x = left_shoulder[0]
+                        right_shoulder_x = right_shoulder[0]
+                        left_wrist_x = left_wrist[0]
+                        right_wrist_x = right_wrist[0]
+                        
+                        # Check horizontal extension for side aiming
+                        left_horizontal_extension = abs(left_wrist_x - left_shoulder_x)
+                        right_horizontal_extension = abs(right_wrist_x - right_shoulder_x)
+                        
+                        # Minimum extension required for aiming (30% of body width)
+                        body_width = abs(right_shoulder_x - left_shoulder_x)
+                        min_extension = body_width * 0.3
+                        
+                        # Check for valid side aiming pose
+                        if (left_side_aiming and left_horizontal_extension > min_extension) or \
+                           (right_side_aiming and right_horizontal_extension > min_extension) or \
+                           (left_diagonal_aiming and left_horizontal_extension > min_extension) or \
+                           (right_diagonal_aiming and right_horizontal_extension > min_extension):
+                            
+                            side_aiming_detected = True
+                            
+                            # Determine aiming type
+                            if left_side_aiming and right_side_aiming:
+                                aiming_type = "DUAL-SIDE"
+                                print(f"DEBUG: Dual-Handed Side Weapon Detected - Left: {left_arm_angle:.1f}°, Right: {right_arm_angle:.1f}° [SIDE AIMING - DUAL]")
+                            elif left_side_aiming or left_diagonal_aiming:
+                                aiming_type = "LEFT-SIDE"
+                                print(f"DEBUG: Left-Handed Side Weapon Detected - Left: {left_arm_angle:.1f}°, Right: {right_arm_angle:.1f}° [SIDE AIMING - LEFT]")
+                            elif right_side_aiming or right_diagonal_aiming:
+                                aiming_type = "RIGHT-SIDE"
+                                print(f"DEBUG: Right-Handed Side Weapon Detected - Left: {left_arm_angle:.1f}°, Right: {right_arm_angle:.1f}° [SIDE AIMING - RIGHT]")
+                    
+                    if side_aiming_detected:
+                        return "Aiming"
+                    else:
+                        # No aiming detected - check for normal activities
+                        print(f"DEBUG: No Weapon Detected - Left: {left_arm_angle:.1f}°, Right: {right_arm_angle:.1f}° [NORMAL POSITION]")
+                        # Continue to other checks (HandsUp, Sitting, etc.)
                 
                 # Check for HandsUp pose ONLY if no aiming detected
                 # Hands up if both wrists are above shoulders (strictly vertical position)
