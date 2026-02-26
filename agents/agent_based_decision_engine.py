@@ -419,16 +419,39 @@ class ThreatAssessmentAgent:
         )
     
     def _extract_severity(self, detection: Dict[str, Any]) -> float:
-        """Extract immediate severity from detection"""
+        """Extract immediate severity from detection with pose enhancement"""
+        base_severity = 0.0
+        
+        # Weapon-based severity
         if detection.get("fight_conf", 0) > 0.5:
-            return Threat.CRITICAL
-        elif detection.get("gun_conf", 0) > 0.45:
-            return Threat.HIGH
-        elif detection.get("knife_conf", 0) > 0.4:
-            return Threat.MEDIUM
-        elif detection.get("meta", {}).get("running", False):
-            return Threat.LOW
-        return Threat.NONE
+            base_severity = Threat.CRITICAL
+        elif detection.get("gun_conf", 0) > 0.3:
+            base_severity = Threat.HIGH
+        elif detection.get("knife_conf", 0) > 0.3:
+            base_severity = Threat.MEDIUM
+        
+        # ENHANCEMENT: Add pose-based severity
+        activity = detection.get("meta", {}).get("activity", "Unknown")
+        pose_severity_multiplier = self._get_pose_severity_multiplier(activity)
+        
+        # Combine weapon and pose severity
+        enhanced_severity = min(base_severity * pose_severity_multiplier, 4.0)
+        
+        return enhanced_severity
+    
+    def _get_pose_severity_multiplier(self, activity: str) -> float:
+        """Get severity multiplier based on detected activity"""
+        pose_severity = {
+            "aiming": 1.8,        # Very high threat
+            "hands_up": 1.5,      # High threat  
+            "running": 1.2,       # Moderate threat
+            "walking": 1.0,       # Normal
+            "sitting": 0.7,        # Low threat
+            "standing": 0.6,      # Very low threat
+            "lying": 0.5,          # Minimal threat
+            "unknown": 1.0         # Default
+        }
+        return pose_severity.get(activity.lower(), 1.0)
     
     def _assess_immediate_threat(self, context: ThreatContext) -> Dict[str, Any]:
         """Assess immediate threat level"""
@@ -561,25 +584,51 @@ class DecisionCoordinatorAgent:
     def _synthesize_decision(self, threat_assessment: Dict[str, Any], 
                            memory_context: Dict[str, Any], 
                            detection: Dict[str, Any]) -> Dict[str, Any]:
-        """Synthesize final decision from all inputs"""
+        """Synthesize final decision from all inputs with pose enhancement"""
         
         # Calculate composite threat score
         composite_score = self._calculate_composite_score(threat_assessment, memory_context)
         
+        # ENHANCEMENT: Add pose-based decision factors
+        activity = detection.get("meta", {}).get("activity", "Unknown")
+        pose_decision_factor = self._get_pose_decision_factor(activity)
+        
+        # Adjust composite score with pose factor
+        enhanced_composite_score = min(composite_score * pose_decision_factor, 4.0)
+        
         # Determine response level
-        response_level = self._determine_response_level(composite_score)
+        response_level = self._determine_response_level(enhanced_composite_score)
         
         # Select actions
         actions = self._select_actions(response_level, threat_assessment, detection)
         
+        # ENHANCEMENT: Add pose-specific actions
+        if activity in ["aiming", "hands_up"] and "SAVE_EVIDENCE" not in actions:
+            actions.append("SAVE_EVIDENCE")
+        
         return {
-            "composite_score": composite_score,
+            "composite_score": enhanced_composite_score,
             "response_level": response_level,
             "actions": actions,
-            "rationale": self._generate_rationale(threat_assessment, composite_score),
+            "rationale": self._generate_rationale(threat_assessment, enhanced_composite_score),
             "priority": self._assign_priority(response_level),
-            "estimated_duration": self._estimate_action_duration(actions)
+            "estimated_duration": self._estimate_action_duration(actions),
+            "pose_context": activity  # ENHANCEMENT: Add pose context
         }
+    
+    def _get_pose_decision_factor(self, activity: str) -> float:
+        """Get decision factor based on detected activity"""
+        pose_factors = {
+            "aiming": 1.5,        # High priority
+            "hands_up": 1.3,      # Medium-high priority
+            "running": 1.1,       # Slight priority
+            "walking": 1.0,       # Normal
+            "sitting": 0.8,       # Lower priority
+            "standing": 0.7,      # Low priority
+            "lying": 0.6,          # Minimal priority
+            "unknown": 1.0         # Default
+        }
+        return pose_factors.get(activity.lower(), 1.0)
     
     def _calculate_composite_score(self, threat_assessment: Dict[str, Any], 
                                  memory_context: Dict[str, Any]) -> float:
@@ -1183,7 +1232,7 @@ class MemoryAgent:
         return state
     
     def _update_memory(self, detection: Dict[str, Any], threat_assessment: Dict[str, Any], system_state: SystemState) -> Dict[str, Any]:
-        """Update memory with new information"""
+        """Update memory with new information and pose patterns"""
         detection_id = detection.get("id")
         
         if detection_id not in self.memory_store:
@@ -1192,7 +1241,9 @@ class MemoryAgent:
                 "detection_count": 0,
                 "patterns": [],
                 "max_threat_level": 0,
-                "state_history": []
+                "state_history": [],
+                "pose_history": [],  # ENHANCEMENT: Track pose patterns
+                "activity_counts": {}  # ENHANCEMENT: Count activity occurrences
             }
         
         memory = self.memory_store[detection_id]
@@ -1200,21 +1251,85 @@ class MemoryAgent:
         memory["last_seen"] = detection.get("timestamp")
         memory["last_state"] = system_state.value
         
+        # ENHANCEMENT: Track pose patterns
+        activity = detection.get("meta", {}).get("activity", "Unknown")
+        memory["pose_history"].append({
+            "activity": activity,
+            "timestamp": detection.get("timestamp"),
+            "threat_level": threat_assessment.get("immediate_threat", {}).get("level", 0)
+        })
+        
+        # ENHANCEMENT: Count activity occurrences
+        if activity not in memory["activity_counts"]:
+            memory["activity_counts"][activity] = 0
+        memory["activity_counts"][activity] += 1
+        
         # Add state to history
         memory["state_history"].append({
             "state": system_state.value,
-            "timestamp": detection.get("timestamp")
+            "timestamp": detection.get("timestamp"),
+            "activity": activity  # ENHANCEMENT: Add activity to state history
         })
         
         # Update max threat level
         current_threat = threat_assessment.get("immediate_threat", {}).get("level", 0)
         memory["max_threat_level"] = max(memory["max_threat_level"], current_threat)
         
-        # Add patterns
-        patterns = threat_assessment.get("behavioral_analysis", {}).get("patterns_detected", [])
-        memory["patterns"].extend(patterns)
+        # ENHANCEMENT: Analyze pose patterns
+        if len(memory["pose_history"]) >= 5:  # Need at least 5 poses for pattern analysis
+            memory["patterns"] = self._analyze_pose_patterns(memory["pose_history"])
         
-        return memory
+        # Return enhanced memory context
+        return {
+            "detection_id": detection_id,
+            "detection_count": memory["detection_count"],
+            "duration": detection.get("timestamp") - memory["first_seen"],
+            "max_threat_level": memory["max_threat_level"],
+            "state_history": memory["state_history"][-10:],  # Last 10 states
+            "pose_patterns": memory.get("patterns", []),
+            "activity_counts": memory["activity_counts"],  # ENHANCEMENT: Activity statistics
+            "dominant_activity": max(memory["activity_counts"].items(), key=lambda x: x[1])[0] if memory["activity_counts"] else "unknown"
+        }
+    
+    def _analyze_pose_patterns(self, pose_history: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """Analyze pose patterns for suspicious behavior"""
+        patterns = []
+        
+        # Check for rapid pose changes
+        if len(pose_history) >= 3:
+            recent_poses = pose_history[-3:]
+            activities = [p["activity"] for p in recent_poses]
+            
+            # Pattern 1: Rapid activity changes
+            if len(set(activities)) == 3:  # 3 different activities
+                patterns.append({
+                    "type": "rapid_activity_change",
+                    "severity": "medium",
+                    "description": "Rapid pose changes detected",
+                    "activities": activities
+                })
+            
+            # Pattern 2: Escalating threat
+            threat_levels = [p["threat_level"] for p in recent_poses]
+            if threat_levels == sorted(threat_levels) and threat_levels[-1] > 2.0:
+                patterns.append({
+                    "type": "escalating_threat",
+                    "severity": "high",
+                    "description": "Threat level escalating",
+                    "threat_progression": threat_levels
+                })
+        
+        # Pattern 3: Aiming detection
+        aiming_count = sum(1 for p in pose_history if p["activity"] == "aiming")
+        if aiming_count >= 2:
+            patterns.append({
+                "type": "repeated_aiming",
+                "severity": "high",
+                "description": "Repeated aiming behavior",
+                "aiming_frequency": aiming_count / len(pose_history)
+            })
+        
+        return patterns
 
 # --------------------------
 # Agent-Based Decision Engine
