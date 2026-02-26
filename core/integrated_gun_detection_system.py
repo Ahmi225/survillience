@@ -11,15 +11,14 @@ import time
 import os
 import platform
 import sqlite3
+import json
 from datetime import datetime
-from typing import Dict, List, Any, Optional
+from typing import Dict, List, Any, Optional, Tuple
 from ultralytics import YOLO
-
-# Import our agent-based decision engine
-from agents.agent_based_decision_engine import AgentBasedDecisionEngine
 from detection.human_tracker import HumanTracker
 from pose_detection import PoseDetector
-from fight_detection import FightDetector
+# from fight_detection import FightDetector  # Temporarily commented due to TensorFlow dependency issues
+from agents.agent_based_decision_engine import AgentBasedDecisionEngine, AgentState
 
 class IntegratedGunDetectionSystem:
     """Complete integrated system with YOLO detection and agent-based decision making"""
@@ -33,17 +32,18 @@ class IntegratedGunDetectionSystem:
         self.decision_engine = AgentBasedDecisionEngine()
         print("✓ Agent-based decision engine initialized")
         
-        # Initialize human tracker
+        # Initialize human tracker with advanced activity classification
         self.human_tracker = HumanTracker()
-        print("✓ Human tracker initialized")
+        print("✓ Human tracker with activity classification initialized")
         
         # Initialize pose detector
         self.pose_detector = PoseDetector()
         print("✓ Pose detector initialized")
         
-        # Initialize fight detector
-        self.fight_detector = FightDetector()
-        print("✓ Fight detector initialized")
+        # Initialize fight detector (temporarily disabled)
+        # self.fight_detector = FightDetector()
+        # print("✓ Fight detector initialized")
+        self.fight_detector = None  # Temporarily disabled
         
         # Get reference to evidence agent for direct frame buffering
         self.evidence_agent = self.decision_engine.evidence_agent
@@ -73,7 +73,8 @@ class IntegratedGunDetectionSystem:
             "alerts_triggered": 0,
             "evidence_saved": 0,
             "hands_up_detections": 0,
-            "fight_detections": 0
+            "fight_detections": 0,
+            "activity_detections": {}  # Track activity statistics
         }
     
     def init_evidence_storage(self):
@@ -304,8 +305,8 @@ class IntegratedGunDetectionSystem:
                 detection["pose_confidence"] = pose_info.get("confidence", 0.0)
                 detection["pose_keypoints"] = pose_info.get("keypoints", [])
             
-            # Add fight information to detection if available
-            if person_id and person_id in self.fight_detector.detected_fights:
+            # Add fight information to detection if available (temporarily disabled)
+            if self.fight_detector is not None and person_id and person_id in self.fight_detector.detected_fights:
                 fight_info = self.fight_detector.detected_fights[person_id]
                 detection["fight_detected"] = fight_info.get("fight_detected", False)
                 detection["fight_confidence"] = fight_info.get("confidence", 0.0)
@@ -794,6 +795,29 @@ class IntegratedGunDetectionSystem:
         
         return heatmap
     
+    def get_activity_statistics(self, detections: List[Dict[str, Any]]) -> Dict[str, int]:
+        """Get activity statistics from detections"""
+        activity_stats = {
+            "Sitting": 0,
+            "Standing": 0,
+            "Walking": 0,
+            "Running": 0,
+            "Lying": 0,
+            "HandsUp": 0,
+            "Aiming": 0,
+            "Unknown": 0
+        }
+        
+        for detection in detections:
+            if detection.get("meta", {}).get("class_name") == "PERSON":
+                activity = detection.get("meta", {}).get("activity", "Unknown")
+                if activity in activity_stats:
+                    activity_stats[activity] += 1
+                else:
+                    activity_stats["Unknown"] += 1
+        
+        return activity_stats
+    
     def create_vertical_analytics_panel(self, frame: np.ndarray, detections: List[Dict[str, Any]] = None) -> np.ndarray:
         """Create vertical analytics panel for right side"""
         analytics = np.zeros((540, 240, 3), dtype=np.uint8)
@@ -810,8 +834,13 @@ class IntegratedGunDetectionSystem:
         # Analytics data
         hands_up_count = self.pose_detector.get_hands_up_count()
         hands_up_ids = self.pose_detector.get_hands_up_person_ids()
-        fight_count = self.fight_detector.get_fight_count()
-        fighting_ids = self.fight_detector.get_fighting_person_ids()
+        
+        # Fight detection (temporarily disabled)
+        fight_count = 0
+        fighting_ids = []
+        
+        # Get activity statistics from human tracker
+        activity_stats = self.get_activity_statistics(detections)
         
         # Get current and total people count
         self.current_detections = detections  # Store current detections
@@ -843,6 +872,14 @@ class IntegratedGunDetectionSystem:
             ("", "", (255, 255, 255)),
             ("🥊 Fight Status", "", (0, 0, 255)),  # Added fight status section
             (f"Fighting IDs:", str(fighting_ids) if fighting_ids else "None", (0, 0, 255)),
+            ("", "", (255, 255, 255)),
+            ("🤸 Activity Status", "", (255, 165, 0)),  # Added activity status section
+            (f"Sitting:", str(activity_stats.get("Sitting", 0)), (255, 165, 0)),
+            (f"Standing:", str(activity_stats.get("Standing", 0)), (0, 255, 0)),
+            (f"Walking:", str(activity_stats.get("Walking", 0)), (0, 255, 255)),
+            (f"Running:", str(activity_stats.get("Running", 0)), (255, 0, 0)),
+            (f"HandsUp:", str(activity_stats.get("HandsUp", 0)), (255, 255, 0)),
+            (f"Aiming:", str(activity_stats.get("Aiming", 0)), (0, 0, 255)),
             ("", "", (255, 255, 255)),
             ("⚡ Performance", "", (0, 255, 0)),
             ("FPS:", "30.0", (0, 255, 0)),
@@ -944,6 +981,8 @@ class IntegratedGunDetectionSystem:
             # Check if track is occluded (from DeepSort)
             is_occluded = detection.get("meta", {}).get("is_occluded", False)
             time_since_update = detection.get("meta", {}).get("time_since_update", 0)
+            activity = detection.get("meta", {}).get("activity", "Unknown")
+            keypoints = detection.get("meta", {}).get("keypoints", [])
             
             # Draw bounding box with occlusion handling
             if is_occluded:
@@ -968,14 +1007,14 @@ class IntegratedGunDetectionSystem:
                              cv2.MARKER_CROSS, 10, 3)
                 
                 # Occlusion label
-                label_text = f"PERSON {person_id} - OCCLUDED ({time_since_update}f)"
+                label_text = f"PERSON {person_id} - OCCLUDED ({time_since_update}f) - {activity}"
                 label_color = (0, 0, 255)  # Red for occluded
             else:
                 # Solid bounding box for visible person
                 cv2.rectangle(annotated_frame, (x1, y1), (x2, y2), color, 2)
                 
-                # Normal label
-                label_text = f"PERSON {person_id} {confidence:.0f}%"
+                # Normal label with activity
+                label_text = f"PERSON {person_id} - {activity}"
                 label_color = color
             
             # Draw label background and text
@@ -985,6 +1024,26 @@ class IntegratedGunDetectionSystem:
             # Draw label text in white
             cv2.putText(annotated_frame, label_text, (x1, y1 - 8), 
                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 2)
+            
+            # Draw pose landmarks if available
+            if len(keypoints) >= 17:
+                # Import pose drawing functions from human_tracker
+                from detection.human_tracker import draw_pose_landmarks, draw_activity_info
+                annotated_frame = draw_pose_landmarks(annotated_frame, keypoints, color, 2)
+                annotated_frame = draw_activity_info(annotated_frame, person_id, activity, keypoints, (x1, y1, x2, y2))
+            
+            # Draw center point
+            center_x = (x1 + x2) // 2
+            center_y = (y1 + y2) // 2
+            
+            if is_occluded:
+                # Draw X for occluded person
+                cv2.drawMarker(annotated_frame, (center_x, center_y), label_color, 
+                             cv2.MARKER_CROSS, 10, 3)
+            else:
+                # Draw filled circle for visible person
+                cv2.circle(annotated_frame, (center_x, center_y), 5, color, -1)
+                cv2.circle(annotated_frame, (center_x, center_y), 7, (255, 255, 255), 1)
         
         # Draw weapons on top (red boxes - foreground layer)
         for detection in weapon_detections:
