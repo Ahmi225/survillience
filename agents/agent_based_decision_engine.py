@@ -996,6 +996,9 @@ class EvidenceAgent:
             cv2.putText(frame, label, (x, y - 25), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
             cv2.putText(frame, score_text, (x, y + h + 20), cv2.FONT_HERSHEY_SIMPLEX, 0.5, state_color, 1)
         
+        # ENHANCEMENT: Add weapon bounding box when weapon detected
+        self._add_weapon_bounding_box(frame, detection)
+        
         # Add system state indicator (top-right corner)
         cv2.putText(frame, f"State: {system_state_str}", (frame.shape[1] - 200, 30), 
                    cv2.FONT_HERSHEY_SIMPLEX, 0.7, state_color, 2)
@@ -1044,6 +1047,65 @@ class EvidenceAgent:
                        cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 0, 255), 3)
         
         return frame
+    
+    def _add_weapon_bounding_box(self, frame: np.ndarray, detection: Dict[str, Any]) -> None:
+        """Add weapon bounding box when weapon is detected"""
+        # Check if any weapon is detected
+        gun_conf = detection.get("gun_conf", 0)
+        knife_conf = detection.get("knife_conf", 0)
+        explosion_conf = detection.get("explosion_conf", 0)
+        grenade_conf = detection.get("grenade_conf", 0)
+        
+        max_confidence = max(gun_conf, knife_conf, explosion_conf, grenade_conf)
+        
+        # Only show weapon box if weapon confidence > 0.4
+        if max_confidence > 0.4:
+            # Get person bounding box
+            bbox = detection.get("bbox", [0, 0, 0, 0])
+            if len(bbox) >= 4:
+                x, y, w, h = bbox[:4]
+                
+                # Create weapon bounding box (smaller, inside person box)
+                # Position weapon box in upper-right area of person box (where weapon is typically held)
+                weapon_box_width = w // 3  # 1/3 of person width
+                weapon_box_height = h // 4  # 1/4 of person height
+                weapon_box_x = x + w - weapon_box_width - 10  # Right side with padding
+                weapon_box_y = y + h // 3  # Upper-middle area
+                
+                # Draw red weapon bounding box
+                cv2.rectangle(frame, 
+                           (weapon_box_x, weapon_box_y), 
+                           (weapon_box_x + weapon_box_width, weapon_box_y + weapon_box_height), 
+                           (0, 0, 255), 2)  # Red color
+                
+                # Add weapon label
+                weapon_type = "GUN"
+                if knife_conf > gun_conf and knife_conf > max_confidence * 0.8:
+                    weapon_type = "KNIFE"
+                elif explosion_conf > max_confidence * 0.8:
+                    weapon_type = "EXPLOSION"
+                elif grenade_conf > max_confidence * 0.8:
+                    weapon_type = "GRENADE"
+                
+                weapon_label = f"🔫 {weapon_type}"
+                label_size = cv2.getTextSize(weapon_label, cv2.FONT_HERSHEY_SIMPLEX, 0.5, 2)[0]
+                
+                # Background for weapon label
+                cv2.rectangle(frame, 
+                           (weapon_box_x, weapon_box_y - 20), 
+                           (weapon_box_x + label_size[0], weapon_box_y), 
+                           (0, 0, 255), -1)  # Red background
+                
+                # Weapon label text
+                cv2.putText(frame, weapon_label, 
+                          (weapon_box_x, weapon_box_y - 5), 
+                          cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 2)
+                
+                # Add confidence score
+                conf_text = f"{max_confidence:.2f}"
+                cv2.putText(frame, conf_text, 
+                          (weapon_box_x, weapon_box_y + weapon_box_height + 15), 
+                          cv2.FONT_HERSHEY_SIMPLEX, 0.4, (0, 0, 255), 1)
     
     def _get_state_color(self, state: str) -> tuple:
         """Get color based on system state"""
