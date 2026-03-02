@@ -450,7 +450,6 @@ class ActivityClassifier:
                           is_visible(right_elbow) and is_visible(right_wrist))
             
             if arms_visible and is_visible(left_shoulder) and is_visible(right_shoulder):
-                # Check for Aiming pose FIRST (priority over hands up to avoid confusion)
                 # Calculate arm extension angles (shoulder to wrist direction)
                 def calculate_arm_angle(shoulder, wrist):
                     dx = wrist[0] - shoulder[0]
@@ -460,156 +459,41 @@ class ActivityClassifier:
                 left_arm_angle = calculate_arm_angle(left_shoulder, left_wrist)
                 right_arm_angle = calculate_arm_angle(right_shoulder, right_wrist)
                 
-                # Aiming pose: arms extended forward (horizontal or slightly downward)
-                # Forward direction: angle between -45° and +45° (0° = straight forward)
-                # NOTE: Camera mirror effect - actual right arm appears as left in mirror
-                # So we swap the logic for real-world aiming detection
+                # SIMPLIFIED AIMING DETECTION
+                # Forward aiming: arms extended forward (horizontal direction)
                 left_aiming = -45 <= left_arm_angle <= 45
                 right_aiming = -45 <= right_arm_angle <= 45
                 
-                # Enhanced Aiming Detection: Check if aiming pose is detected
-                # Priority: Aiming > Everything else
+                # Check for Aiming pose FIRST (highest priority)
                 if left_aiming or right_aiming:
-                    # Check wrist positions relative to shoulders for enhanced detection
-                    left_shoulder_y = left_shoulder[1]
-                    right_shoulder_y = right_shoulder[1]
-                    left_wrist_y = left_wrist[1]
-                    right_wrist_y = right_wrist[1]
+                    # Verify arm extension (wrists should be away from shoulders)
+                    left_extension = abs(left_wrist[0] - left_shoulder[0])
+                    right_extension = abs(right_wrist[0] - right_shoulder[0])
+                    body_width = abs(right_shoulder[0] - left_shoulder[0])
+                    min_extension = body_width * 0.25  # 25% of shoulder width
                     
-                    # Enhanced Weapon Detection with better angle ranges
-                    # Forward direction: angle between -60° and +60° (0° = straight forward)
-                    # NOTE: Camera mirror effect - actual right arm appears as left in mirror
-                    # So we swap the logic for real-world aiming detection
+                    valid_aiming = False
+                    if left_aiming and left_extension > min_extension:
+                        valid_aiming = True
+                        print(f"DEBUG: Left Arm Aiming - Angle: {left_arm_angle:.1f}°, Extension: {left_extension:.1f}px [AIMING]")
+                    if right_aiming and right_extension > min_extension:
+                        valid_aiming = True
+                        print(f"DEBUG: Right Arm Aiming - Angle: {right_arm_angle:.1f}°, Extension: {right_extension:.1f}px [AIMING]")
                     
-                    # Check which arm is actually aiming in real world
-                    real_left_aiming = right_aiming  # Mirror: right arm appears as left
-                    real_right_aiming = left_aiming   # Mirror: left arm appears as right
-                    
-                    if real_left_aiming and real_right_aiming:
-                        print(f"DEBUG: Dual-Handed Weapon Detected (Full Body) - Left: {left_arm_angle:.1f}°, Right: {right_arm_angle:.1f}° [WEAPON AIMING - REAL DUAL]")
+                    if valid_aiming:
                         return "Aiming"
-                    elif real_left_aiming:
-                        # Real left arm aiming (appears as right arm in mirror)
-                        print(f"DEBUG: Left-Handed Weapon Detected (Full Body) - Left: {left_arm_angle:.1f}°, Right: {right_arm_angle:.1f}° [WEAPON AIMING - REAL LEFT]")
-                        return "Aiming"
-                    elif real_right_aiming:
-                        # Real right arm aiming (appears as left arm in mirror)
-                        print(f"DEBUG: Right-Handed Weapon Detected (Full Body) - Left: {left_arm_angle:.1f}°, Right: {right_arm_angle:.1f}° [WEAPON AIMING - REAL RIGHT]")
-                        return "Aiming"
-                else:
-                    # Check for SIDE AIMING poses when forward aiming not detected
-                    # Side aiming: arms extended sideways (90° ± 30°)
-                    left_side_aiming = 60 <= left_arm_angle <= 120
-                    right_side_aiming = -120 <= right_arm_angle <= -60
-                    
-                    # Also check for diagonal aiming (45° to 135° and -45° to -135°)
-                    left_diagonal_aiming = 45 <= left_arm_angle <= 135
-                    right_diagonal_aiming = -135 <= right_arm_angle <= -45
-                    
-                    # NEW: Check for UPWARD aiming poses (based on your images)
-                    # Upward aiming: arms pointing upward (-135° to -45° and 45° to 135°)
-                    left_upward_aiming = -135 <= left_arm_angle <= -45
-                    right_upward_aiming = 45 <= right_arm_angle <= 135
-                    
-                    # NEW: Check for HIGH side poses (arms above shoulder level)
-                    # High side: arms extended sideways but elevated
-                    left_high_side = 30 <= left_arm_angle <= 90
-                    right_high_side = -90 <= right_arm_angle <= -30
-                    
-                    # NEW: Check for LOW aiming poses (arms pointing downward)
-                    # Low aiming: arms pointing downward slightly
-                    left_low_aiming = -30 <= left_arm_angle <= 30
-                    right_low_aiming = -30 <= right_arm_angle <= 30
-                    
-                    # Enhanced side aiming detection
-                    side_aiming_detected = False
-                    aiming_type = ""
-                    
-                    if left_side_aiming or right_side_aiming or left_diagonal_aiming or right_diagonal_aiming or \
-                       left_upward_aiming or right_upward_aiming or left_high_side or right_high_side:
-                        # Verify if wrists are extended away from body (aiming posture)
-                        left_shoulder_x = left_shoulder[0]
-                        right_shoulder_x = right_shoulder[0]
-                        left_wrist_x = left_wrist[0]
-                        right_wrist_x = right_wrist[0]
-                        
-                        # Check horizontal extension for side aiming
-                        left_horizontal_extension = abs(left_wrist_x - left_shoulder_x)
-                        right_horizontal_extension = abs(right_wrist_x - right_shoulder_x)
-                        
-                        # Check vertical extension for upward aiming
-                        left_vertical_extension = abs(left_wrist_y - left_shoulder_y)
-                        right_vertical_extension = abs(right_wrist_y - right_shoulder_y)
-                        
-                        # Minimum extension required for aiming (30% of body width/height)
-                        body_width = abs(right_shoulder_x - left_shoulder_x)
-                        body_height = abs(left_shoulder_y - left_hip[1]) if len(left_hip) >= 2 else body_width
-                        min_horizontal_extension = body_width * 0.3
-                        min_vertical_extension = body_height * 0.2
-                        
-                        # Enhanced detection for various aiming poses
-                        valid_aiming = False
-                        
-                        # Check forward aiming (existing logic)
-                        if left_aiming or right_aiming:
-                            valid_aiming = True
-                            aiming_type = "FORWARD"
-                        
-                        # Check side aiming with horizontal extension
-                        elif (left_side_aiming and left_horizontal_extension > min_horizontal_extension) or \
-                             (right_side_aiming and right_horizontal_extension > min_horizontal_extension):
-                            valid_aiming = True
-                            aiming_type = "SIDE"
-                        
-                        # Check diagonal aiming
-                        elif (left_diagonal_aiming and left_horizontal_extension > min_horizontal_extension) or \
-                             (right_diagonal_aiming and right_horizontal_extension > min_horizontal_extension):
-                            valid_aiming = True
-                            aiming_type = "DIAGONAL"
-                        
-                        # Check upward aiming with vertical extension
-                        elif (left_upward_aiming and left_vertical_extension > min_vertical_extension) or \
-                             (right_upward_aiming and right_vertical_extension > min_vertical_extension):
-                            valid_aiming = True
-                            aiming_type = "UPWARD"
-                        
-                        # Check high side aiming
-                        elif (left_high_side and left_horizontal_extension > min_horizontal_extension * 0.8) or \
-                             (right_high_side and right_horizontal_extension > min_horizontal_extension * 0.8):
-                            valid_aiming = True
-                            aiming_type = "HIGH-SIDE"
-                        
-                        # Check low aiming
-                        elif (left_low_aiming and left_horizontal_extension > min_horizontal_extension * 0.5) or \
-                             (right_low_aiming and right_horizontal_extension > min_horizontal_extension * 0.5):
-                            valid_aiming = True
-                            aiming_type = "LOW"
-                        
-                        if valid_aiming:
-                            side_aiming_detected = True
-                            
-                            # Determine specific aiming type for debug
-                            if left_side_aiming and right_side_aiming:
-                                print(f"DEBUG: Dual-Handed Side Weapon Detected - Left: {left_arm_angle:.1f}°, Right: {right_arm_angle:.1f}° [SIDE AIMING - DUAL]")
-                            elif left_upward_aiming or right_upward_aiming:
-                                print(f"DEBUG: Upward Aiming Weapon Detected - Left: {left_arm_angle:.1f}°, Right: {right_arm_angle:.1f}° [UPWARD AIMING]")
-                            elif left_high_side or right_high_side:
-                                print(f"DEBUG: High Side Weapon Detected - Left: {left_arm_angle:.1f}°, Right: {right_arm_angle:.1f}° [HIGH-SIDE AIMING]")
-                            elif left_diagonal_aiming or right_diagonal_aiming:
-                                print(f"DEBUG: Diagonal Weapon Detected - Left: {left_arm_angle:.1f}°, Right: {right_arm_angle:.1f}° [DIAGONAL AIMING]")
-                            elif left_side_aiming or left_diagonal_aiming:
-                                print(f"DEBUG: Left-Handed Side Weapon Detected - Left: {left_arm_angle:.1f}°, Right: {right_arm_angle:.1f}° [SIDE AIMING - LEFT]")
-                            elif right_side_aiming or right_diagonal_aiming:
-                                print(f"DEBUG: Right-Handed Side Weapon Detected - Left: {left_arm_angle:.1f}°, Right: {right_arm_angle:.1f}° [SIDE AIMING - RIGHT]")
-                            elif left_low_aiming or right_low_aiming:
-                                print(f"DEBUG: Low Aiming Weapon Detected - Left: {left_arm_angle:.1f}°, Right: {right_arm_angle:.1f}° [LOW AIMING]")
-                    
-                    if side_aiming_detected:
-                        return "Aiming"
-                    else:
-                        # No aiming detected - check for normal activities
-                        print(f"DEBUG: No Weapon Detected - Left: {left_arm_angle:.1f}°, Right: {right_arm_angle:.1f}° [NORMAL POSITION]")
-                        # Continue to other checks (HandsUp, Sitting, etc.)
+                
+                # Check for HandsUp pose (second priority)
+                # Hands up: wrists above shoulders
+                left_hands_up = left_wrist[1] < left_shoulder[1] - 20  # 20 pixels above shoulder
+                right_hands_up = right_wrist[1] < right_shoulder[1] - 20
+                
+                if left_hands_up and right_hands_up:
+                    print(f"DEBUG: Hands Up Pose - Left: {left_arm_angle:.1f}°, Right: {right_arm_angle:.1f}° [HANDS UP]")
+                    return "HandsUp"
+                elif left_hands_up or right_hands_up:
+                    print(f"DEBUG: Single Hand Up - Left: {left_arm_angle:.1f}°, Right: {right_arm_angle:.1f}° [SINGLE HAND UP]")
+                    return "HandsUp"
                 
                 # Check for HandsUp pose ONLY if no aiming detected
                 # Hands up if both wrists are above shoulders (strictly vertical position)
